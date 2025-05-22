@@ -51,7 +51,7 @@ Performs AI-powered search using Cloudflare's `aiSearch()` method with optional 
 
 1. **Cloudflare Account** with AutoRAG access
 2. **AutoRAG Instance** - Created and indexed in your Cloudflare account
-3. **Wrangler CLI** - For deployment (`npm install -g wrangler`)
+3. **Wrangler CLI** - For deployment (`npm install --save-dev wrangler`)
 
 ## Deployment
 
