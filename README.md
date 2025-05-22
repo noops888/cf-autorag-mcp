@@ -1,35 +1,51 @@
 # Cloudflare AutoRAG MCP Server
 
-A Model Context Protocol (MCP) server that provides search capabilities for Cloudflare AutoRAG instances. This server enables AI assistants like Claude to directly search and query your AutoRAG knowledge base using two distinct search methods.
+A Model Context Protocol (MCP) server that provides search capabilities for Cloudflare AutoRAG instances. This server enables AI assistants like Claude to directly search and query your AutoRAG knowledge base using three distinct search methods.
 
 ## Features
 
-- 🔍 **Basic Search** - Vector similarity search without answer generation
-- 🤖 **AI Search** - AI-powered search with query rewriting and ranking (returns document chunks only)
+- 🔍 **Basic Search** - Vector similarity search without query rewriting or answer generation
+- ✏️ **Rewrite Search** - Vector search with AI query rewriting but no answer generation (returns document chunks only)
+- 🤖 **AI Search** - Full AI-powered search with query rewriting AND answer generation (returns both AI response and document chunks)
 - ⚙️ **Configurable Parameters** - Support for `score_threshold`, `max_num_results`, and metadata filtering
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
 
 ## Tools
 
-### `autorag_search`
+### `autorag_basic_search`
 Performs a basic vector similarity search in your Cloudflare AutoRAG index without AI query rewriting or answer generation. Returns raw document chunks only.
 
 **Parameters:**
 - `query` (string, required) - The search query text
-- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return
 - `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
 - `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: false)
 
-### `autorag_ai_search`
-Performs an AI-powered search with query rewriting and ranking but **no answer generation**. Uses Cloudflare's `search()` method with `rewrite_query: true` for better semantic matching and returns only ranked document chunks.
+### `autorag_rewrite_search`
+Performs a vector search with AI query rewriting but **no answer generation**. Uses Cloudflare's `search()` method with `rewrite_query: true` for better semantic matching and returns only document chunks.
 
 **Parameters:**
 - `query` (string, required) - The search query text  
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
 - `max_num_results` (number, optional) - Maximum number of results to return
 - `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: true)
+
+### `autorag_ai_search`
+Performs full AI-powered search using Cloudflare's `aiSearch()` method. Returns **both** an AI-generated response AND the source document chunks. Includes query rewriting by default.
+
+**Parameters:**
+- `query` (string, required) - The search query text  
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `max_num_results` (number, optional) - Maximum number of results to return
+- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `rewrite_query` (boolean, optional) - Whether to rewrite the query for better semantic matching (default: true)
+
+**Response includes:**
+- `response` - AI-generated answer based on retrieved documents
+- `data` - Array of source document chunks with scores and metadata
 
 ## Prerequisites
 
@@ -138,12 +154,20 @@ Once configured with Claude Desktop, you can use the tools like this:
 Search for documents about "machine learning" in my AutoRAG with a minimum score threshold of 0.7
 ```
 
+**Rewrite Search:**
+```
+Use rewrite search to find information about "deployment strategies" with query rewriting enabled
+```
+
 **AI Search with Filtering:**
 ```
 Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results and score threshold 0.3
 ```
 
-**Important Note:** Both tools return **document chunks only** - no AI-generated responses. The difference is that `autorag_ai_search` uses `rewrite_query: true` for AI-powered query rewriting and better semantic matching.
+**Important Notes:** 
+- `autorag_basic_search` and `autorag_rewrite_search` return **document chunks only** - no AI-generated responses
+- `autorag_ai_search` returns **both** AI-generated responses AND document chunks
+- All tools support the same parameter structure for consistent usage
 
 ## Development
 

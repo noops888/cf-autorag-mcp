@@ -34,7 +34,6 @@ interface AutoRAGAiSearchParams {
     score_threshold?: number;
   };
   filters?: Record<string, any>;
-  stream?: boolean;
 }
 
 interface AutoRAGSearchResponse {
@@ -52,12 +51,19 @@ interface AutoRAGAiSearchResponse {
   object: string;
   search_query: string;
   response: string;
-  data?: Array<{
+  data: Array<{
     file_id: string;
-    content: string;
+    filename: string;
     score: number;
-    metadata?: Record<string, any>;
+    attributes?: Record<string, any>;
+    content: Array<{
+      id: string;
+      type: string;
+      text: string;
+    }>;
   }>;
+  has_more: boolean;
+  next_page: string | null;
 }
 
 interface JsonRpcRequest {
@@ -135,6 +141,9 @@ class WorkersMcpServer {
         } else if (value instanceof z.ZodNumber) {
           properties[key] = { type: 'number', description: value.description };
           if (!value.isOptional()) required.push(key);
+        } else if (value instanceof z.ZodBoolean) {
+          properties[key] = { type: 'boolean', description: value.description };
+          if (!value.isOptional()) required.push(key);
         } else if (value instanceof z.ZodRecord) {
           properties[key] = { type: 'object', description: value.description };
           if (!value.isOptional()) required.push(key);
@@ -144,6 +153,8 @@ class WorkersMcpServer {
             properties[key] = { type: 'string', description: innerType.description };
           } else if (innerType instanceof z.ZodNumber) {
             properties[key] = { type: 'number', description: innerType.description };
+          } else if (innerType instanceof z.ZodBoolean) {
+            properties[key] = { type: 'boolean', description: innerType.description };
           } else if (innerType instanceof z.ZodRecord) {
             properties[key] = { type: 'object', description: innerType.description };
           }
@@ -260,27 +271,23 @@ function createServer(env: Env): WorkersMcpServer {
 
   // Basic search tool
   server.addTool(
-    'autorag_search',
-    'Search for documents in Cloudflare AutoRAG without answer generation',
+    'autorag_basic_search',
+    'Basic search for documents in Cloudflare AutoRAG without query rewriting or answer generation',
     z.object({
       query: z.string().describe('The search query to find relevant documents'),
-      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0). Default varies by AutoRAG configuration'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return. Default varies by AutoRAG configuration'),
-      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
-      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching. Default is true')
+      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
+      max_num_results: z.number().optional().describe('Maximum number of results to return'),
+      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})')
     }),
-    async ({ query, score_threshold, max_num_results, filters, rewrite_query }) => {
+    async ({ query, score_threshold, max_num_results, filters }) => {
       try {
         const searchParams: AutoRAGSearchParams = { 
           query,
-          rewrite_query: rewrite_query ?? false // Default to false for basic search
+          rewrite_query: false, // Basic search never rewrites query
+          ranking_options: {
+            score_threshold: score_threshold ?? 0.5 // Default threshold of 0.5
+          }
         };
-        
-        if (score_threshold !== undefined) {
-          searchParams.ranking_options = {
-            score_threshold: score_threshold
-          };
-        }
         if (max_num_results !== undefined) {
           searchParams.max_num_results = max_num_results;
         }
@@ -311,29 +318,27 @@ function createServer(env: Env): WorkersMcpServer {
     }
   );
 
-  // AI search tool with ranking but NO AI generation - uses search method with rewrite_query=true
+  // Search with query rewriting but NO AI generation
   server.addTool(
-    'autorag_ai_search',
-    'Search for documents in Cloudflare AutoRAG with AI-powered ranking but NO answer generation (returns document chunks only)',
+    'autorag_rewrite_search',
+    'Search for documents in Cloudflare AutoRAG with AI query rewriting but NO answer generation (returns document chunks only)',
     z.object({
-      query: z.string().describe('The search query to find relevant documents with AI-powered ranking'),
-      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0). Default varies by AutoRAG configuration'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return. Default varies by AutoRAG configuration'),
-      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})')
+      query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
+      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
+      max_num_results: z.number().optional().describe('Maximum number of results to return'),
+      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
+      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query using AI (default: true)')
     }),
-    async ({ query, score_threshold, max_num_results, filters }) => {
+    async ({ query, score_threshold, max_num_results, filters, rewrite_query }) => {
       try {
-        // Use search method with rewrite_query=true for AI-powered ranking without generation
+        // Use search method with configurable rewrite_query for AI-powered ranking without generation
         const searchParams: AutoRAGSearchParams = { 
           query,
-          rewrite_query: true // Enable AI query rewriting for better ranking
+          rewrite_query: rewrite_query ?? true, // Default to true for rewrite search
+          ranking_options: {
+            score_threshold: score_threshold ?? 0.5 // Default threshold of 0.5
+          }
         };
-        
-        if (score_threshold !== undefined) {
-          searchParams.ranking_options = {
-            score_threshold: score_threshold
-          };
-        }
         if (max_num_results !== undefined) {
           searchParams.max_num_results = max_num_results;
         }
@@ -343,6 +348,57 @@ function createServer(env: Env): WorkersMcpServer {
 
         // Use search method instead of aiSearch to avoid AI generation
         const result = await env.AI.autorag(env.AUTORAG_NAME).search(searchParams);
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error in AutoRAG rewrite search: ${error instanceof Error ? error.message : String(error)}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  // AI Search tool with both AI response AND document chunks
+  server.addTool(
+    'autorag_ai_search',
+    'Search documents in Cloudflare AutoRAG with AI-generated response AND document chunks. Returns both AI answer and source documents.',
+    z.object({
+      query: z.string().describe('The search query to find relevant documents and generate an AI response'),
+      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
+      max_num_results: z.number().optional().describe('Maximum number of results to return'),
+      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
+      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching (default: true)')
+    }),
+    async ({ query, score_threshold, max_num_results, filters, rewrite_query }) => {
+      try {
+        const searchParams: AutoRAGAiSearchParams = { 
+          query,
+          rewrite_query: rewrite_query ?? true, // Default to true for AI search
+          ranking_options: {
+            score_threshold: score_threshold ?? 0.5 // Default threshold of 0.5
+          }
+        };
+        if (max_num_results !== undefined) {
+          searchParams.max_num_results = max_num_results;
+        }
+        if (filters !== undefined) {
+          searchParams.filters = filters;
+        }
+
+        // Use aiSearch method to get both AI response and document chunks
+        const result = await env.AI.autorag(env.AUTORAG_NAME).aiSearch(searchParams);
         
         return {
           content: [
