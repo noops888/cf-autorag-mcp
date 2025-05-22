@@ -1,0 +1,14 @@
+name = "cf-autorag-mcp"
+main = "src/server.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+AUTORAG_NAME = "your-autorag-name"
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "your-vectorize-index-name"

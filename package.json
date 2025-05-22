@@ -1,0 +1,22 @@
+{
+  "name": "cf-autorag-mcp",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Cloudflare AutoRAG",
+  "main": "src/server.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "content-type": "^1.0.5",
+    "raw-body": "^3.0.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "wrangler": "^4.16.0"
+  }
+}
