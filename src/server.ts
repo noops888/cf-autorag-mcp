@@ -241,7 +241,7 @@ class WorkersMcpServer {
             id,
             error: {
               code: -32601,
-              message: `Method '${method}' not supported`
+              message: method ? `Method '${method}' not supported` : 'Method is required'
             }
           };
       }
@@ -261,7 +261,7 @@ class WorkersMcpServer {
 function createServer(env: Env): WorkersMcpServer {
   const server = new WorkersMcpServer({
     name: 'cloudflare-autorag-mcp',
-    version: '1.0.0',
+    version: '1.1.1',
   }, { 
     capabilities: { 
       tools: {},
@@ -370,18 +370,19 @@ function createServer(env: Env): WorkersMcpServer {
     }
   );
 
-  // AI Search tool with both AI response AND document chunks
+  // AI Search tool with configurable AI response
   server.addTool(
     'autorag_ai_search',
-    'Search documents in Cloudflare AutoRAG with AI-generated response AND document chunks. Returns both AI answer and source documents.',
+    'Search documents in Cloudflare AutoRAG with AI query rewriting and optional AI-generated response. Returns document chunks and optionally AI answer.',
     z.object({
-      query: z.string().describe('The search query to find relevant documents and generate an AI response'),
+      query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
       score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
       max_num_results: z.number().optional().describe('Maximum number of results to return'),
       filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
-      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching (default: true)')
+      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching (default: true)'),
+      include_ai_response: z.boolean().optional().describe('Whether to include the AI-generated response in the output (default: false)')
     }),
-    async ({ query, score_threshold, max_num_results, filters, rewrite_query }) => {
+    async ({ query, score_threshold, max_num_results, filters, rewrite_query, include_ai_response }) => {
       try {
         const searchParams: AutoRAGAiSearchParams = { 
           query,
@@ -400,11 +401,23 @@ function createServer(env: Env): WorkersMcpServer {
         // Use aiSearch method to get both AI response and document chunks
         const result = await env.AI.autorag(env.AUTORAG_NAME).aiSearch(searchParams);
         
+        // Conditionally exclude AI response if include_ai_response is false
+        const responseToReturn = include_ai_response ?? false 
+          ? result 
+          : {
+              object: result.object,
+              search_query: result.search_query,
+              data: result.data,
+              has_more: result.has_more,
+              next_page: result.next_page
+              // Exclude 'response' field
+            };
+        
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2)
+              text: JSON.stringify(responseToReturn, null, 2)
             }
           ]
         };

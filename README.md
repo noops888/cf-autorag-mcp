@@ -6,8 +6,8 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 
 - 🔍 **Basic Search** - Vector similarity search without query rewriting or answer generation
 - ✏️ **Rewrite Search** - Vector search with AI query rewriting but no answer generation (returns document chunks only)
-- 🤖 **AI Search** - Full AI-powered search with query rewriting AND answer generation (returns both AI response and document chunks)
-- ⚙️ **Configurable Parameters** - Support for `score_threshold`, `max_num_results`, and metadata filtering
+- 🤖 **AI Search** - Full AI-powered search with optional AI response and configurable query rewriting
+- ⚙️ **Configurable Parameters** - Support for `score_threshold` (default: 0.5), `max_num_results`, and metadata filtering
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
 
@@ -21,31 +21,31 @@ Performs a basic vector similarity search in your Cloudflare AutoRAG index witho
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return
 - `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
-- `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: false)
 
 ### `autorag_rewrite_search`
-Performs a vector search with AI query rewriting but **no answer generation**. Uses Cloudflare's `search()` method with `rewrite_query: true` for better semantic matching and returns only document chunks.
+Performs a vector search with AI query rewriting but **no answer generation**. Uses Cloudflare's `search()` method with configurable `rewrite_query` for better semantic matching and returns only document chunks.
 
 **Parameters:**
 - `query` (string, required) - The search query text  
-- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return
 - `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
 - `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: true)
 
 ### `autorag_ai_search`
-Performs full AI-powered search using Cloudflare's `aiSearch()` method. Returns **both** an AI-generated response AND the source document chunks. Includes query rewriting by default.
+Performs AI-powered search using Cloudflare's `aiSearch()` method with optional AI-generated response. Returns document chunks and optionally an AI answer based on the `include_ai_response` parameter.
 
 **Parameters:**
 - `query` (string, required) - The search query text  
-- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return
 - `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
 - `rewrite_query` (boolean, optional) - Whether to rewrite the query for better semantic matching (default: true)
+- `include_ai_response` (boolean, optional) - Whether to include the AI-generated response in the output (default: false)
 
 **Response includes:**
-- `response` - AI-generated answer based on retrieved documents
-- `data` - Array of source document chunks with scores and metadata
+- `data` - Array of source document chunks with scores and metadata (always included)
+- `response` - AI-generated answer based on retrieved documents (only when `include_ai_response: true`)
 
 ## Prerequisites
 
@@ -149,24 +149,31 @@ index_name = "your-autorag-index-name"
 
 Once configured with Claude Desktop, you can use the tools like this:
 
-**Basic Search:**
+**Basic Search (no query rewriting, no AI response):**
 ```
 Search for documents about "machine learning" in my AutoRAG with a minimum score threshold of 0.7
 ```
 
-**Rewrite Search:**
+**Rewrite Search (AI query rewriting, no AI response):**
 ```
 Use rewrite search to find information about "deployment strategies" with query rewriting enabled
 ```
 
-**AI Search with Filtering:**
+**AI Search with Document Chunks Only (default behavior):**
 ```
-Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results and score threshold 0.3
+Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results
+```
+
+**AI Search with AI-Generated Response:**
+```
+Use AI search to find information about "deployment strategies" and include the AI-generated response
 ```
 
 **Important Notes:** 
-- `autorag_basic_search` and `autorag_rewrite_search` return **document chunks only** - no AI-generated responses
-- `autorag_ai_search` returns **both** AI-generated responses AND document chunks
+- `autorag_basic_search` performs pure vector search without any AI enhancements
+- `autorag_rewrite_search` uses AI query rewriting but returns **document chunks only** 
+- `autorag_ai_search` by default returns **document chunks only** (letting the client LLM generate responses), but can optionally include Cloudflare's AI-generated response
+- All tools use a **default score threshold of 0.5** if not specified
 - All tools support the same parameter structure for consistent usage
 
 ## Development
@@ -196,6 +203,8 @@ cf-autorag-mcp/
 - **Runtime**: Cloudflare Workers with Node.js compatibility
 - **MCP Version**: 2024-11-05
 - **Transport**: HTTP-based (no streaming)
+- **Default Score Threshold**: 0.5 for all search tools
+- **Parameter Validation**: Comprehensive validation with clear error messages
 
 ## Troubleshooting
 
@@ -213,11 +222,22 @@ cf-autorag-mcp/
    - Restart Claude Desktop after configuration changes
    - Check the Worker logs: `npx wrangler tail`
 
+4. **Empty search results**
+   - Try lowering the `score_threshold` parameter (default is 0.5)
+   - Verify your AutoRAG index has been populated with documents
+   - Check that your query terms exist in the indexed content
+
 ### Logs
 View real-time logs from your deployed Worker:
 ```bash
 npx wrangler tail
 ```
+
+## Version History
+
+- **v1.1.1** - Added `include_ai_response` parameter to AI search tool, default score threshold of 0.5, comprehensive parameter validation
+- **v1.1.0** - Added three distinct search tools with boolean parameter support
+- **v1.0.0** - Initial release
 
 ## License
 
