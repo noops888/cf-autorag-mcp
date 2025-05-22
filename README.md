@@ -5,30 +5,31 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 ## Features
 
 - 🔍 **Basic Search** - Vector similarity search without answer generation
-- 🤖 **AI Search** - AI-powered search with ranking and response generation
-- ⚙️ **Configurable Parameters** - Support for `match_threshold`, `max_results`, and metadata filtering
+- 🤖 **AI Search** - AI-powered search with ranking but NO answer generation (returns document chunks only)
+- ⚙️ **Configurable Parameters** - Support for `score_threshold`, `max_num_results`, and metadata filtering
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
 
 ## Tools
 
 ### `autorag_search`
-Performs a basic vector similarity search in your Cloudflare AutoRAG index without generating an AI response.
+Performs a basic vector similarity search in your Cloudflare AutoRAG index without AI query rewriting or answer generation. Returns raw document chunks only.
 
 **Parameters:**
 - `query` (string, required) - The search query text
-- `match_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
-- `max_results` (number, optional) - Maximum number of results to return
-- `filter` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `max_num_results` (number, optional) - Maximum number of results to return
+- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: false)
 
 ### `autorag_ai_search`
-Performs an AI-powered search with ranking and generates a response using the retrieved context. Query rewriting is disabled as requested.
+Performs an AI-powered search with query rewriting and ranking but **NO answer generation**. Returns ranked document chunks only, never AI-generated responses.
 
 **Parameters:**
-- `query` (string, required) - The search query text
-- `match_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
-- `max_results` (number, optional) - Maximum number of results to return
-- `filter` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `query` (string, required) - The search query text  
+- `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0)
+- `max_num_results` (number, optional) - Maximum number of results to return
+- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
 
 ## Prerequisites
 
@@ -134,13 +135,15 @@ Once configured with Claude Desktop, you can use the tools like this:
 
 **Basic Search:**
 ```
-Search for documents about "machine learning" in my AutoRAG with a minimum similarity of 0.7
+Search for documents about "machine learning" in my AutoRAG with a minimum score threshold of 0.7
 ```
 
 **AI Search with Filtering:**
 ```
-Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results
+Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results and score threshold 0.3
 ```
+
+**Important Note:** Both tools return **document chunks only** - no AI-generated responses. The difference is that `autorag_ai_search` uses AI query rewriting for better semantic matching and ranking.
 
 ## Development
 
