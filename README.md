@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 ## Features
 
 - 🔍 **Basic Search** - Vector similarity search without answer generation
-- 🤖 **AI Search** - AI-powered search with ranking but NO answer generation (returns document chunks only)
+- 🤖 **AI Search** - AI-powered search with query rewriting and ranking (returns document chunks only)
 - ⚙️ **Configurable Parameters** - Support for `score_threshold`, `max_num_results`, and metadata filtering
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
@@ -23,7 +23,7 @@ Performs a basic vector similarity search in your Cloudflare AutoRAG index witho
 - `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: false)
 
 ### `autorag_ai_search`
-Performs an AI-powered search with query rewriting and ranking but **NO answer generation**. Returns ranked document chunks only, never AI-generated responses.
+Performs an AI-powered search with query rewriting and ranking but **no answer generation**. Uses Cloudflare's `search()` method with `rewrite_query: true` for better semantic matching and returns only ranked document chunks.
 
 **Parameters:**
 - `query` (string, required) - The search query text  
@@ -143,7 +143,7 @@ Search for documents about "machine learning" in my AutoRAG with a minimum score
 Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results and score threshold 0.3
 ```
 
-**Important Note:** Both tools return **document chunks only** - no AI-generated responses. The difference is that `autorag_ai_search` uses AI query rewriting for better semantic matching and ranking.
+**Important Note:** Both tools return **document chunks only** - no AI-generated responses. The difference is that `autorag_ai_search` uses `rewrite_query: true` for AI-powered query rewriting and better semantic matching.
 
 ## Development
 
