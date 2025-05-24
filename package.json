@@ -1,6 +1,6 @@
 {
   "name": "cf-autorag-mcp",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Model Context Protocol server for Cloudflare AutoRAG",
   "main": "src/server.ts",
   "type": "module",

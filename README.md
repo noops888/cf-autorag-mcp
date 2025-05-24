@@ -7,7 +7,8 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 - 🔍 **Basic Search** - Vector similarity search without query rewriting or answer generation
 - ✏️ **Rewrite Search** - Vector search with AI query rewriting but no answer generation (returns document chunks only)
 - 🤖 **AI Search** - Full AI-powered search with optional AI response and configurable query rewriting
-- ⚙️ **Configurable Parameters** - Support for `score_threshold` (default: 0.5), `max_num_results`, and metadata filtering
+- ⚙️ **Configurable Parameters** - Support for `score_threshold` (default: 0.5) and `max_num_results` (1-50, default: 10)
+- 📄 **Pagination Support** - AI search supports cursor-based pagination for large result sets (v1.2.0+)
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
 
@@ -19,8 +20,7 @@ Performs a basic vector similarity search in your Cloudflare AutoRAG index witho
 **Parameters:**
 - `query` (string, required) - The search query text
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
-- `max_num_results` (number, optional) - Maximum number of results to return
-- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
 
 ### `autorag_rewrite_search`
 Performs a vector search with AI query rewriting but **no answer generation**. Uses Cloudflare's `search()` method with configurable `rewrite_query` for better semantic matching and returns only document chunks.
@@ -28,24 +28,26 @@ Performs a vector search with AI query rewriting but **no answer generation**. U
 **Parameters:**
 - `query` (string, required) - The search query text  
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
-- `max_num_results` (number, optional) - Maximum number of results to return
-- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
 - `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: true)
 
 ### `autorag_ai_search`
-Performs AI-powered search using Cloudflare's `aiSearch()` method with optional AI-generated response. Returns document chunks and optionally an AI answer based on the `include_ai_response` parameter.
+Performs AI-powered search using Cloudflare's `aiSearch()` method with optional AI-generated response. Returns document chunks and optionally an AI answer based on the `include_ai_response` parameter. Supports pagination for large result sets.
 
 **Parameters:**
 - `query` (string, required) - The search query text  
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
-- `max_num_results` (number, optional) - Maximum number of results to return
-- `filters` (object, optional) - Metadata filters for multitenancy (e.g., `{"folder": "tenant1"}`)
+- `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
 - `rewrite_query` (boolean, optional) - Whether to rewrite the query for better semantic matching (default: true)
 - `include_ai_response` (boolean, optional) - Whether to include the AI-generated response in the output (default: false)
+- `cursor` (string, optional) - Pagination cursor from previous response to fetch next page of results (v1.2.0+)
 
 **Response includes:**
 - `data` - Array of source document chunks with scores and metadata (always included)
 - `response` - AI-generated answer based on retrieved documents (only when `include_ai_response: true`)
+- `has_more` - Boolean indicating if more results are available
+- `next_page` - Cursor token for fetching the next page (when `has_more` is true)
+- `nextCursor` - MCP-compliant cursor field (mirrors `next_page` value)
 
 ## Prerequisites
 
@@ -161,7 +163,7 @@ Use rewrite search to find information about "deployment strategies" with query 
 
 **AI Search with Document Chunks Only (default behavior):**
 ```
-Use AI search to find information about "deployment strategies" for the "production" tenant with max 5 results
+Use AI search to find information about "deployment strategies" with max 5 results
 ```
 
 **AI Search with AI-Generated Response:**
@@ -175,6 +177,7 @@ Use AI search to find information about "deployment strategies" and include the 
 - `autorag_ai_search` by default returns **document chunks only** (letting the client LLM generate responses), but can optionally include Cloudflare's AI-generated response
 - All tools use a **default score threshold of 0.5** if not specified
 - All tools support the same parameter structure for consistent usage
+- **Metadata filtering is not supported in Workers bindings** - use the REST API if you need filtered queries
 
 ## Development
 
@@ -235,6 +238,8 @@ npx wrangler tail
 
 ## Version History
 
+- **v1.1.3** - Removed filters parameter (not supported in Workers bindings), added helpful error messages for filter attempts
+- **v1.1.2** - Attempted to fix filter format (discovered Workers bindings don't support filters)
 - **v1.1.1** - Added `include_ai_response` parameter to AI search tool, default score threshold of 0.5, comprehensive parameter validation
 - **v1.1.0** - Added three distinct search tools with boolean parameter support
 - **v1.0.0** - Initial release
