@@ -5,6 +5,8 @@ import { z } from 'zod';
  * Provides search and aiSearch tools for Cloudflare AutoRAG instances
  */
 
+// Note: Filters are not supported in Workers bindings - only available via REST API
+
 interface Env {
   AI: {
     autorag: (name: string) => {
@@ -23,7 +25,7 @@ interface AutoRAGSearchParams {
   ranking_options?: {
     score_threshold?: number;
   };
-  filters?: Record<string, any>;
+  // filters parameter removed - not supported in Workers bindings
 }
 
 interface AutoRAGAiSearchParams {
@@ -33,7 +35,8 @@ interface AutoRAGAiSearchParams {
   ranking_options?: {
     score_threshold?: number;
   };
-  filters?: Record<string, any>;
+  cursor?: string; // Added for pagination support
+  // filters parameter removed - not supported in Workers bindings
 }
 
 interface AutoRAGSearchResponse {
@@ -128,6 +131,12 @@ class WorkersMcpServer {
   }
 
   private zodToJsonSchema(schema: z.ZodSchema): any {
+    // Handle union types
+    if (schema instanceof z.ZodUnion) {
+      const types = schema._def.options.map((opt: z.ZodSchema) => this.zodToJsonSchema(opt));
+      return { oneOf: types };
+    }
+    
     // Basic Zod to JSON Schema conversion
     if (schema instanceof z.ZodObject) {
       const properties: Record<string, any> = {};
@@ -147,6 +156,10 @@ class WorkersMcpServer {
         } else if (value instanceof z.ZodRecord) {
           properties[key] = { type: 'object', description: value.description };
           if (!value.isOptional()) required.push(key);
+        } else if (value instanceof z.ZodObject) {
+          // Handle nested objects like FiltersSchema
+          properties[key] = this.zodToJsonSchema(value);
+          if (!value.isOptional()) required.push(key);
         } else if (value instanceof z.ZodOptional) {
           const innerType = value._def.innerType;
           if (innerType instanceof z.ZodString) {
@@ -157,6 +170,9 @@ class WorkersMcpServer {
             properties[key] = { type: 'boolean', description: innerType.description };
           } else if (innerType instanceof z.ZodRecord) {
             properties[key] = { type: 'object', description: innerType.description };
+          } else if (innerType instanceof z.ZodObject) {
+            // Handle nested objects inside optional
+            properties[key] = this.zodToJsonSchema(innerType);
           }
         }
       }
@@ -167,6 +183,18 @@ class WorkersMcpServer {
         required
       };
     }
+    
+    // Handle primitives
+    if (schema instanceof z.ZodString) {
+      return { type: 'string', description: schema.description };
+    }
+    if (schema instanceof z.ZodNumber) {
+      return { type: 'number', description: schema.description };
+    }
+    if (schema instanceof z.ZodBoolean) {
+      return { type: 'boolean', description: schema.description };
+    }
+    
     return { type: 'object' };
   }
 
@@ -210,6 +238,19 @@ class WorkersMcpServer {
               error: {
                 code: -32601,
                 message: `Tool '${name}' not found`
+              }
+            };
+          }
+
+          // Check for filters parameter and provide helpful error
+          if (args && args.filters) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: {
+                code: -32602,
+                message: 'Invalid params',
+                data: 'Metadata filtering is not supported in Workers bindings. Please use the REST API for filtered queries. See: https://developers.cloudflare.com/autorag/usage/rest-api/'
               }
             };
           }
@@ -261,7 +302,7 @@ class WorkersMcpServer {
 function createServer(env: Env): WorkersMcpServer {
   const server = new WorkersMcpServer({
     name: 'cloudflare-autorag-mcp',
-    version: '1.1.1',
+    version: '1.2.0',
   }, { 
     capabilities: { 
       tools: {},
@@ -276,10 +317,9 @@ function createServer(env: Env): WorkersMcpServer {
     z.object({
       query: z.string().describe('The search query to find relevant documents'),
       score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return'),
-      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})')
+      max_num_results: z.number().optional().describe('Maximum number of results to return')
     }),
-    async ({ query, score_threshold, max_num_results, filters }) => {
+    async ({ query, score_threshold, max_num_results }) => {
       try {
         const searchParams: AutoRAGSearchParams = { 
           query,
@@ -290,9 +330,6 @@ function createServer(env: Env): WorkersMcpServer {
         };
         if (max_num_results !== undefined) {
           searchParams.max_num_results = max_num_results;
-        }
-        if (filters !== undefined) {
-          searchParams.filters = filters;
         }
 
         const result = await env.AI.autorag(env.AUTORAG_NAME).search(searchParams);
@@ -326,10 +363,9 @@ function createServer(env: Env): WorkersMcpServer {
       query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
       score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
       max_num_results: z.number().optional().describe('Maximum number of results to return'),
-      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
       rewrite_query: z.boolean().optional().describe('Whether to rewrite the query using AI (default: true)')
     }),
-    async ({ query, score_threshold, max_num_results, filters, rewrite_query }) => {
+    async ({ query, score_threshold, max_num_results, rewrite_query }) => {
       try {
         // Use search method with configurable rewrite_query for AI-powered ranking without generation
         const searchParams: AutoRAGSearchParams = { 
@@ -341,9 +377,6 @@ function createServer(env: Env): WorkersMcpServer {
         };
         if (max_num_results !== undefined) {
           searchParams.max_num_results = max_num_results;
-        }
-        if (filters !== undefined) {
-          searchParams.filters = filters;
         }
 
         // Use search method instead of aiSearch to avoid AI generation
@@ -378,11 +411,11 @@ function createServer(env: Env): WorkersMcpServer {
       query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
       score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
       max_num_results: z.number().optional().describe('Maximum number of results to return'),
-      filters: z.record(z.any()).optional().describe('Metadata filters to apply to the search (e.g., {"folder": "tenant1"})'),
       rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching (default: true)'),
-      include_ai_response: z.boolean().optional().describe('Whether to include the AI-generated response in the output (default: false)')
+      include_ai_response: z.boolean().optional().describe('Whether to include the AI-generated response in the output (default: false)'),
+      cursor: z.string().optional().describe('Pagination cursor from previous response to fetch next page of results')
     }),
-    async ({ query, score_threshold, max_num_results, filters, rewrite_query, include_ai_response }) => {
+    async ({ query, score_threshold, max_num_results, rewrite_query, include_ai_response, cursor }) => {
       try {
         const searchParams: AutoRAGAiSearchParams = { 
           query,
@@ -394,22 +427,26 @@ function createServer(env: Env): WorkersMcpServer {
         if (max_num_results !== undefined) {
           searchParams.max_num_results = max_num_results;
         }
-        if (filters !== undefined) {
-          searchParams.filters = filters;
+        if (cursor !== undefined) {
+          searchParams.cursor = cursor;
         }
 
         // Use aiSearch method to get both AI response and document chunks
         const result = await env.AI.autorag(env.AUTORAG_NAME).aiSearch(searchParams);
         
-        // Conditionally exclude AI response if include_ai_response is false
+        // Transform the response to include nextCursor for MCP compliance
         const responseToReturn = include_ai_response ?? false 
-          ? result 
+          ? {
+              ...result,
+              nextCursor: result.next_page || undefined
+            }
           : {
               object: result.object,
               search_query: result.search_query,
               data: result.data,
               has_more: result.has_more,
-              next_page: result.next_page
+              next_page: result.next_page,
+              nextCursor: result.next_page || undefined
               // Exclude 'response' field
             };
         
@@ -440,6 +477,18 @@ function createServer(env: Env): WorkersMcpServer {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      // Handle CORS preflight
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          }
+        });
+      }
+
       // Only handle POST requests for MCP
       if (request.method !== 'POST') {
         return new Response(JSON.stringify({
@@ -453,18 +502,6 @@ export default {
           status: 405,
           headers: { 
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-          }
-        });
-      }
-
-      // Handle CORS preflight
-      if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          status: 200,
-          headers: {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type'
