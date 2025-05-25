@@ -14,8 +14,10 @@ interface Env {
       aiSearch: (params: AutoRAGAiSearchParams) => Promise<AutoRAGAiSearchResponse>;
     };
   };
-  VECTORIZE: VectorizeIndex;
-  AUTORAG_NAME: string;
+  AUTORAG_NAME?: string; // Default AutoRAG instance (optional if using AUTORAG_INSTANCES)
+  // Support for multiple AutoRAG instances
+  AUTORAG_INSTANCES?: string; // Comma-separated list of AutoRAG instance names
+  AUTORAG_DESCRIPTIONS?: string; // Comma-separated list of descriptions
 }
 
 interface AutoRAGSearchParams {
@@ -302,7 +304,7 @@ class WorkersMcpServer {
 function createServer(env: Env): WorkersMcpServer {
   const server = new WorkersMcpServer({
     name: 'cloudflare-autorag-mcp',
-    version: '1.2.0',
+    version: '2.0.0',
   }, { 
     capabilities: { 
       tools: {},
@@ -310,16 +312,69 @@ function createServer(env: Env): WorkersMcpServer {
     } 
   });
 
+  // Helper function to get available AutoRAG instances
+  const getAutoRAGInstances = () => {
+    const instances: Array<{ name: string; description: string; is_default: boolean }> = [];
+    
+    // Check if we have multiple instances configured
+    if (env.AUTORAG_INSTANCES) {
+      const names = env.AUTORAG_INSTANCES.split(',').map(s => s.trim()).filter(s => s);
+      const descriptions = env.AUTORAG_DESCRIPTIONS?.split(',').map(s => s.trim()) || [];
+      
+      names.forEach((name, index) => {
+        instances.push({
+          name,
+          description: descriptions[index] || `AutoRAG instance: ${name}`,
+          is_default: index === 0 // First instance is default
+        });
+      });
+    } else if (env.AUTORAG_NAME) {
+      // Fallback to single instance configuration
+      instances.push({
+        name: env.AUTORAG_NAME,
+        description: 'Default AutoRAG instance',
+        is_default: true
+      });
+    }
+    
+    return instances;
+  };
+  
+  // Helper function to get default AutoRAG name
+  const getDefaultAutoRAGName = () => {
+    if (env.AUTORAG_NAME) {
+      return env.AUTORAG_NAME;
+    }
+    if (env.AUTORAG_INSTANCES) {
+      const firstInstance = env.AUTORAG_INSTANCES.split(',')[0]?.trim();
+      if (firstInstance) {
+        return firstInstance;
+      }
+    }
+    throw new Error('No AutoRAG instances configured');
+  };
+  
+  // Helper function to validate AutoRAG name
+  const validateAutoRAGName = (autoragName: string): string => {
+    const instances = getAutoRAGInstances();
+    const validInstance = instances.find(i => i.name === autoragName);
+    if (!validInstance) {
+      throw new Error(`AutoRAG instance '${autoragName}' not found. Available instances: ${instances.map(i => i.name).join(', ')}`);
+    }
+    return autoragName;
+  };
+
   // Basic search tool
   server.addTool(
     'autorag_basic_search',
-    'Basic search for documents in Cloudflare AutoRAG without query rewriting or answer generation',
+    'Basic search for documents in Cloudflare AutoRAG without query rewriting or answer generation. Query length: max 10,000 chars. Score range: 0.0-1.0 (higher = better match).',
     z.object({
-      query: z.string().describe('The search query to find relevant documents'),
-      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return')
+      query: z.string().max(10000).describe('The search query to find relevant documents (max 10,000 chars)'),
+      score_threshold: z.number().min(0).max(1).optional().describe('Minimum similarity score threshold (0.0-1.0, default: 0.5)'),
+      max_num_results: z.number().min(1).max(50).optional().describe('Maximum number of results to return (1-50, default: 10)'),
+      autorag_name: z.string().optional().describe('Name of the AutoRAG instance to use (defaults to configured default)')
     }),
-    async ({ query, score_threshold, max_num_results }) => {
+    async ({ query, score_threshold, max_num_results, autorag_name }) => {
       try {
         const searchParams: AutoRAGSearchParams = { 
           query,
@@ -332,7 +387,11 @@ function createServer(env: Env): WorkersMcpServer {
           searchParams.max_num_results = max_num_results;
         }
 
-        const result = await env.AI.autorag(env.AUTORAG_NAME).search(searchParams);
+        // Use specified AutoRAG instance or default
+        const autoragInstance = autorag_name 
+          ? validateAutoRAGName(autorag_name) 
+          : getDefaultAutoRAGName();
+        const result = await env.AI.autorag(autoragInstance).search(searchParams);
         
         return {
           content: [
@@ -358,14 +417,15 @@ function createServer(env: Env): WorkersMcpServer {
   // Search with query rewriting but NO AI generation
   server.addTool(
     'autorag_rewrite_search',
-    'Search for documents in Cloudflare AutoRAG with AI query rewriting but NO answer generation (returns document chunks only)',
+    'Search for documents in Cloudflare AutoRAG with AI query rewriting but NO answer generation (returns document chunks only). Query length: max 10,000 chars. Score range: 0.0-1.0 (higher = better match).',
     z.object({
-      query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
-      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return'),
-      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query using AI (default: true)')
+      query: z.string().max(10000).describe('The search query to find relevant documents with AI query rewriting (max 10,000 chars)'),
+      score_threshold: z.number().min(0).max(1).optional().describe('Minimum similarity score threshold (0.0-1.0, default: 0.5)'),
+      max_num_results: z.number().min(1).max(50).optional().describe('Maximum number of results to return (1-50, default: 10)'),
+      rewrite_query: z.boolean().optional().describe('Whether to rewrite the query using AI (default: true)'),
+      autorag_name: z.string().optional().describe('Name of the AutoRAG instance to use (defaults to configured default)')
     }),
-    async ({ query, score_threshold, max_num_results, rewrite_query }) => {
+    async ({ query, score_threshold, max_num_results, rewrite_query, autorag_name }) => {
       try {
         // Use search method with configurable rewrite_query for AI-powered ranking without generation
         const searchParams: AutoRAGSearchParams = { 
@@ -379,8 +439,12 @@ function createServer(env: Env): WorkersMcpServer {
           searchParams.max_num_results = max_num_results;
         }
 
+        // Use specified AutoRAG instance or default
+        const autoragInstance = autorag_name 
+          ? validateAutoRAGName(autorag_name) 
+          : getDefaultAutoRAGName();
         // Use search method instead of aiSearch to avoid AI generation
-        const result = await env.AI.autorag(env.AUTORAG_NAME).search(searchParams);
+        const result = await env.AI.autorag(autoragInstance).search(searchParams);
         
         return {
           content: [
@@ -406,16 +470,17 @@ function createServer(env: Env): WorkersMcpServer {
   // AI Search tool with configurable AI response
   server.addTool(
     'autorag_ai_search',
-    'Search documents in Cloudflare AutoRAG with AI query rewriting and optional AI-generated response. Returns document chunks and optionally AI answer.',
+    'Search documents in Cloudflare AutoRAG with AI query rewriting and optional AI-generated response. Returns document chunks and optionally AI answer. Supports pagination for large result sets. Query length: max 10,000 chars. Score range: 0.0-1.0 (higher = better match).',
     z.object({
-      query: z.string().describe('The search query to find relevant documents with AI query rewriting'),
-      score_threshold: z.number().optional().describe('Minimum similarity score threshold (0.0 to 1.0, default: 0.5)'),
-      max_num_results: z.number().optional().describe('Maximum number of results to return'),
+      query: z.string().max(10000).describe('The search query to find relevant documents with AI query rewriting (max 10,000 chars)'),
+      score_threshold: z.number().min(0).max(1).optional().describe('Minimum similarity score threshold (0.0-1.0, default: 0.5)'),
+      max_num_results: z.number().min(1).max(50).optional().describe('Maximum number of results to return (1-50, default: 10)'),
       rewrite_query: z.boolean().optional().describe('Whether to rewrite the query for better semantic matching (default: true)'),
       include_ai_response: z.boolean().optional().describe('Whether to include the AI-generated response in the output (default: false)'),
-      cursor: z.string().optional().describe('Pagination cursor from previous response to fetch next page of results')
+      cursor: z.string().optional().describe('Pagination cursor from previous response to fetch next page of results'),
+      autorag_name: z.string().optional().describe('Name of the AutoRAG instance to use (defaults to configured default)')
     }),
-    async ({ query, score_threshold, max_num_results, rewrite_query, include_ai_response, cursor }) => {
+    async ({ query, score_threshold, max_num_results, rewrite_query, include_ai_response, cursor, autorag_name }) => {
       try {
         const searchParams: AutoRAGAiSearchParams = { 
           query,
@@ -431,8 +496,12 @@ function createServer(env: Env): WorkersMcpServer {
           searchParams.cursor = cursor;
         }
 
+        // Use specified AutoRAG instance or default
+        const autoragInstance = autorag_name 
+          ? validateAutoRAGName(autorag_name) 
+          : getDefaultAutoRAGName();
         // Use aiSearch method to get both AI response and document chunks
-        const result = await env.AI.autorag(env.AUTORAG_NAME).aiSearch(searchParams);
+        const result = await env.AI.autorag(autoragInstance).aiSearch(searchParams);
         
         // Transform the response to include nextCursor for MCP compliance
         const responseToReturn = include_ai_response ?? false 
@@ -466,6 +535,68 @@ function createServer(env: Env): WorkersMcpServer {
               text: `Error in AutoRAG AI search: ${error instanceof Error ? error.message : String(error)}`
             }
           ]
+        };
+      }
+    }
+  );
+
+  // AutoRAG management tools
+  server.addTool(
+    'list_autorags',
+    'List all available AutoRAG instances configured in the server',
+    z.object({}),
+    async () => {
+      try {
+        const instances = getAutoRAGInstances();
+        
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              autorags: instances,
+              total: instances.length,
+              default: instances.find(i => i.is_default)?.name || instances[0]?.name
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: 'text',
+            text: `Error listing AutoRAG instances: ${errorMessage}`
+          }]
+        };
+      }
+    }
+  );
+
+  server.addTool(
+    'get_current_autorag',
+    'Get the currently configured default AutoRAG instance',
+    z.object({}),
+    async () => {
+      try {
+        const instances = getAutoRAGInstances();
+        const defaultInstance = instances.find(i => i.is_default);
+        
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              current_autorag: defaultInstance?.name || getDefaultAutoRAGName(),
+              description: defaultInstance?.description || 'Default AutoRAG instance',
+              is_default: true
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: 'text',
+            text: `Error getting current AutoRAG: ${errorMessage}`
+          }]
         };
       }
     }

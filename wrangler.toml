@@ -1,14 +1,15 @@
+
 name = "cf-autorag-mcp"
 main = "src/server.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-AUTORAG_NAME = "your-autorag-name"
+# For single AutoRAG instance:
+# AUTORAG_NAME = "single-autorag-name"
+# For multiple AutoRAG instances (first is default):
+AUTORAG_INSTANCES = "first-autorag-name,second-autorag-name"
+AUTORAG_DESCRIPTIONS = "AutoRAG 1 description,AutoRAG 2 description"
 
 [ai]
 binding = "AI"
-
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "your-vectorize-index-name"
