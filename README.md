@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 - 🤖 **AI Search** - Full AI-powered search with optional AI response and configurable query rewriting
 - ⚙️ **Configurable Parameters** - Support for `score_threshold` (default: 0.5) and `max_num_results` (1-50, default: 10)
 - 📄 **Pagination Support** - AI search supports cursor-based pagination for large result sets (v1.2.0+)
+- 🏢 **Multi-AutoRAG Support** - Manage and search across multiple AutoRAG instances (v2.0.0+)
 - 🌐 **Remote Deployment** - Runs on Cloudflare Workers for scalability
 - 🔗 **MCP Compatible** - Works with Claude Desktop and other MCP clients
 
@@ -18,29 +19,32 @@ A Model Context Protocol (MCP) server that provides search capabilities for Clou
 Performs a basic vector similarity search in your Cloudflare AutoRAG index without AI query rewriting or answer generation. Returns raw document chunks only.
 
 **Parameters:**
-- `query` (string, required) - The search query text
+- `query` (string, required) - The search query text (max 10,000 characters)
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
+- `autorag_name` (string, optional) - Name of the AutoRAG instance to use (defaults to configured default)
 
 ### `autorag_rewrite_search`
 Performs a vector search with AI query rewriting but **no answer generation**. Uses Cloudflare's `search()` method with configurable `rewrite_query` for better semantic matching and returns only document chunks.
 
 **Parameters:**
-- `query` (string, required) - The search query text  
+- `query` (string, required) - The search query text (max 10,000 characters)
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
 - `rewrite_query` (boolean, optional) - Whether to rewrite query for better matching (default: true)
+- `autorag_name` (string, optional) - Name of the AutoRAG instance to use (defaults to configured default)
 
 ### `autorag_ai_search`
 Performs AI-powered search using Cloudflare's `aiSearch()` method with optional AI-generated response. Returns document chunks and optionally an AI answer based on the `include_ai_response` parameter. Supports pagination for large result sets.
 
 **Parameters:**
-- `query` (string, required) - The search query text  
+- `query` (string, required) - The search query text (max 10,000 characters)
 - `score_threshold` (number, optional) - Minimum similarity score threshold (0.0-1.0, default: 0.5)
 - `max_num_results` (number, optional) - Maximum number of results to return (1-50, default: 10)
 - `rewrite_query` (boolean, optional) - Whether to rewrite the query for better semantic matching (default: true)
 - `include_ai_response` (boolean, optional) - Whether to include the AI-generated response in the output (default: false)
 - `cursor` (string, optional) - Pagination cursor from previous response to fetch next page of results (v1.2.0+)
+- `autorag_name` (string, optional) - Name of the AutoRAG instance to use (defaults to configured default)
 
 **Response includes:**
 - `data` - Array of source document chunks with scores and metadata (always included)
@@ -48,6 +52,26 @@ Performs AI-powered search using Cloudflare's `aiSearch()` method with optional 
 - `has_more` - Boolean indicating if more results are available
 - `next_page` - Cursor token for fetching the next page (when `has_more` is true)
 - `nextCursor` - MCP-compliant cursor field (mirrors `next_page` value)
+
+### `list_autorags` (v2.0.0+)
+Lists all available AutoRAG instances configured in the server.
+
+**Parameters:** None
+
+**Response includes:**
+- `autorags` - Array of AutoRAG instances with name, description, and is_default flag
+- `total` - Total number of configured AutoRAG instances
+- `default` - Name of the default AutoRAG instance
+
+### `get_current_autorag` (v2.0.0+)
+Gets information about the currently configured default AutoRAG instance.
+
+**Parameters:** None
+
+**Response includes:**
+- `current_autorag` - Name of the current default AutoRAG instance
+- `description` - Description of the instance
+- `is_default` - Always true for this endpoint
 
 ## Prerequisites
 
@@ -68,14 +92,20 @@ Performs AI-powered search using Cloudflare's `aiSearch()` method with optional 
    npm install
    ```
 
-3. **Configure your AutoRAG instance and index names:**
-   Edit `wrangler.toml` and update the `AUTORAG_NAME` variable and your vectorize index name:
+3. **Configure your AutoRAG instance:**
+   Edit `wrangler.toml` and update the configuration:
+   
+   For a single AutoRAG instance:
    ```toml
    [vars]
    AUTORAG_NAME = "your-autorag-instance-name"
-
-   [[vectorize]]
-   index_name = "your-autorag-index-name"
+   ```
+   
+   For multiple AutoRAG instances:
+   ```toml
+   [vars]
+   AUTORAG_INSTANCES = "instance1,instance2,instance3"
+   AUTORAG_DESCRIPTIONS = "Description 1,Description 2,Description 3"
    ```
 
 4. **Deploy to Cloudflare Workers:**
@@ -122,9 +152,10 @@ After updating the configuration:
 
 The server uses the following Cloudflare Worker bindings:
 
-- `AI` - Cloudflare AI binding for AutoRAG access
-- `VECTORIZE` - Vectorize index binding (automatically configured by AutoRAG)
-- `AUTORAG_NAME` - Your AutoRAG instance name (set in `wrangler.toml`)
+- `AI` - Cloudflare AI binding for AutoRAG access (handles all AutoRAG operations)
+- `AUTORAG_NAME` - Your AutoRAG instance name (for single instance configuration)
+- `AUTORAG_INSTANCES` - Comma-separated list of AutoRAG instances (for multi-instance configuration)
+- `AUTORAG_DESCRIPTIONS` - Comma-separated list of descriptions for each instance
 
 ### Wrangler Configuration
 
@@ -137,15 +168,18 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
+# For single AutoRAG instance:
 AUTORAG_NAME = "your-autorag-instance-name"
+
+# For multiple AutoRAG instances (v2.0.0+):
+# AUTORAG_INSTANCES = "default-autorag,secondary-autorag,specialized-autorag"
+# AUTORAG_DESCRIPTIONS = "Main knowledge base,Secondary knowledge base,Specialized documents"
 
 [ai]
 binding = "AI"
-
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "your-autorag-index-name"
 ```
+
+**Note:** The VECTORIZE binding is not required. AutoRAG manages its own vector index access internally through the AI binding.
 
 ## Usage Examples
 
@@ -169,6 +203,15 @@ Use AI search to find information about "deployment strategies" with max 5 resul
 **AI Search with AI-Generated Response:**
 ```
 Use AI search to find information about "deployment strategies" and include the AI-generated response
+```
+
+**Multi-AutoRAG Usage (v2.0.0+):**
+```
+List all available AutoRAG instances
+
+Search for "security policies" in the secondary-autorag instance
+
+Use AI search in specialized-autorag to find "compliance requirements" with AI response
 ```
 
 **Important Notes:** 
@@ -238,6 +281,8 @@ npx wrangler tail
 
 ## Version History
 
+- **v2.0.0** - Multi-AutoRAG support, enhanced schema documentation, removed VECTORIZE binding
+- **v1.2.0** - Added cursor-based pagination support for AI search tool
 - **v1.1.3** - Removed filters parameter (not supported in Workers bindings), added helpful error messages for filter attempts
 - **v1.1.2** - Attempted to fix filter format (discovered Workers bindings don't support filters)
 - **v1.1.1** - Added `include_ai_response` parameter to AI search tool, default score threshold of 0.5, comprehensive parameter validation
